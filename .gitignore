@@ -1,0 +1,112 @@
+# ===========================
+# macOS
+# ===========================
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ===========================
+# Python
+# ===========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+
+# ===========================
+# Environnements virtuels
+# ===========================
+.env
+.venv
+env/
+venv/
+ENV/
+
+# ===========================
+# Jupyter Notebooks
+# ===========================
+.ipynb_checkpoints/
+*.ipynb
+
+# ===========================
+# PyTorch / ML
+# ===========================
+*.pth
+*.pt
+*.ckpt
+*.pkl
+*.h5
+*.hdf5
+wandb/
+runs/
+lightning_logs/
+mlruns/
+
+# ===========================
+# OpenCOOD / spconv
+# ===========================
+checkpoints/
+logs/
+opencood/utils/build/
+opencood/utils/*.so
+opencood/utils/*.egg-info/
+
+# ===========================
+# CARLA
+# ===========================
+carla_logs/
+*.log
+*.rec
+*.avi
+*.mp4
+
+# ===========================
+# Données / Datasets
+# ===========================
+data/
+datasets/
+opv2v/
+*.bin
+*.pcd
+*.npy
+*.npz
+
+# ===========================
+# Résultats / Visualisations
+# ===========================
+output/
+outputs/
+results/
+vis_output/
+*.png
+*.jpg
+*.gif
+
+# ===========================
+# IDE
+# ===========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ===========================
+# Variables d'environnement
+# ===========================
+.env
+.env.local
+secrets.yaml
+config_local.yaml
