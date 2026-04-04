@@ -3,7 +3,8 @@ name: visualization
 
 yaml_parser: "load_voxel_params"
 root_dir: "opv2v_data_dumping/train"
-validate_dir: "opv2v_data_dumping/test"
+validate_dir: "/raid/home/students/lahrach_cha/ChakibProjects/adafuse/data/opv2v/test/test_chunks/test"
+
 
 train_params:
   batch_size: &batch_size 4

@@ -2,58 +2,88 @@
 
 > CentraleSupélec ST7 Research Project · 2025–2026
 
-AdaFuse is a research framework for **cooperative multi-agent perception in autonomous vehicles**, built on top of [OpenCOOD](https://github.com/DerrickXuNu/OpenCOOD) and [CARLA](https://carla.org). Its core contribution is a **dynamic fusion strategy selector** that adapts in real time to driving conditions — rather than committing to a fixed fusion approach for all scenarios.
+AdaFuse is a research framework for **cooperative multi-agent perception in autonomous vehicles**, built on top of [OpenCOOD](https://github.com/DerrickXuNu/OpenCOOD) and [CARLA](https://carla.org). Its core contribution is a **dynamic fusion strategy selector** that chooses between **Intermediate Fusion** and **Late Fusion** (and hybrid groupings of agents) so as to **maximize detection quality** while **respecting network bandwidth** between agents.
+
+---
+
+## Research Goal
+
+The project uses OpenCOOD as the perception backbone. The open research question is **when to fuse at feature level (intermediate)** versus **when to exchange only detections (late)**, possibly **partitioning the fleet** into clusters (intermediate within a cluster, late fusion across clusters or among remaining agents).
+
+### Objectives
+
+1. **Model communication constraints** — Represent available bitrates between pairs of agents (V2V links), and estimate the **data volume** induced by intermediate fusion (feature maps) versus late fusion (bounding boxes / scores).
+2. **Context for the selector** — Provide each decision step with:
+   - **2D positions** (or poses) of the simulated robots / ego vehicles,
+   - A **short textual scene summary** (density, layout, occlusion hints if available),
+   - **Bandwidth matrix** and feasibility flags from the constraint model.
+3. **LLM-based fusion policy** — An LLM reads this structured context and outputs a **fusion plan**: global intermediate, global late, or **mixed** (e.g. clusters in intermediate, then late fusion between clusters or selected agents).
+4. **Bi-objective rationale** — Favor plans that improve **detection metrics** (e.g. AP from OpenCOOD evaluation) while **minimizing aggregate network load**; the LLM prompt encodes this trade-off; future work may **fine-tune a small LLM** on curated (context, decision, metrics) tuples.
+
+### Scope Note
+
+OpenCOOD’s reference `inference.py` runs **one** fusion method per pass (`late`, `early`, or `intermediate`). Implementing a **full hybrid forward pass** inside the same model for arbitrary agent partitions may require additional model or orchestration work. The **AdaFuse** code in this repository delivers the **constraint model**, **scene encoding**, and **LLM (or rule-based) policy** that decide *which* strategy (or *which* cluster assignment) to use; coupling this tightly to batched hybrid OpenCOOD inference is left as an integration step.
 
 ---
 
 ## Motivation
 
-A single autonomous vehicle has a fundamentally limited field of view. Occlusions, long-range blind spots, and sensor noise are unavoidable when operating in isolation. Vehicle-to-Vehicle (V2V) communication enables agents to share their perceptions — but how they share it matters enormously.
+A single autonomous vehicle has a fundamentally limited field of view. Occlusions, long-range blind spots, and sensor noise are unavoidable when operating in isolation. Vehicle-to-Vehicle (V2V) communication enables agents to share their perceptions — but **how** they share it matters: intermediate fusion is richer but **heavier on the link**; late fusion is **lighter** but may miss complementary cues.
 
-Current cooperative perception systems use a **fixed fusion strategy** (early, late, or intermediate) regardless of context. This is suboptimal: a high-occlusion urban intersection calls for richer feature sharing, while a low-bandwidth highway scenario may only afford lightweight detection exchange.
-
-**AdaFuse addresses this gap** by learning to select the right fusion strategy dynamically, conditioned on the current driving context.
+**AdaFuse** does not fix a single strategy. It adapts to **topology, bitrate limits, and scene semantics** using a reasoning layer (LLM at inference time; optional smaller fine-tuned model later).
 
 ---
 
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        CARLA Simulator                       │
-│         Multi-agent scenarios · Sensor data collection       │
-└─────────────────────────┬───────────────────────────────────┘
-                          │  LiDAR point clouds, metadata
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    OpenCOOD Pipeline                         │
-│                                                              │
-│  Agent 1       Agent 2       Agent N                         │
-│  [Encoder] ── [Encoder] ── [Encoder]                        │
-│       │            │            │                            │
-│       └────────────┴────────────┘                            │
-│                    │                                         │
-│             [Fusion Module] ◄── AdaFuse selects strategy     │
-│                    │                                         │
-│             [3D Detection]                                   │
-│                    │                                         │
-│             [Bounding Boxes + AP Metrics]                    │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  AdaFuse — Core Contribution                 │
-│                                                              │
-│  Context:  { n_agents, bandwidth, occlusion_rate, ... }     │
-│                        │                                     │
-│              [LLM-based Strategy Selector]                   │
-│                        │                                     │
-│   ┌────────────────────┼────────────────────┐               │
-│   ▼                    ▼                    ▼               │
-│ Early Fusion    Intermediate Fusion    Late Fusion           │
-│ (raw LiDAR)     (shared features)    (detections only)      │
-└─────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│  CARLA dataset (this repo): `data/new_dataset_carla/`               │
+│  10 LiDAR agents · GT JSON + trajectoires · per-agent PLY            │
+└───────────────────────────────┬────────────────────────────────────┘
+                                │
+                                ▼
+┌────────────────────────────────────────────────────────────────────┐
+│  Scene encoder                                                      │
+│  · Agent positions (x, y, yaw, id)                                  │
+│  · Textual summary of the scene                                      │
+└───────────────────────────────┬────────────────────────────────────┘
+                                │
+                                ▼
+┌────────────────────────────────────────────────────────────────────┐
+│  Bandwidth & feasibility model (`adafuse.bandwidth`)                 │
+│  · Pairwise capacity C_ij (bits/s)                                   │
+│  · Estimated load: intermediate vs late per link / cluster            │
+│  · Feasibility under constraints                                     │
+└───────────────────────────────┬────────────────────────────────────┘
+                                │
+                                ▼
+┌────────────────────────────────────────────────────────────────────┐
+│  Fusion policy (LLM or rule-based fallback, `adafuse.llm_selector`) │
+│  Output: intermediate / late / hybrid clusters                     │
+│  Objective: ↑ detection metrics, ↓ network usage                    │
+└───────────────────────────────┬────────────────────────────────────┘
+                                │
+                                ▼
+┌────────────────────────────────────────────────────────────────────┐
+│  OpenCOOD pipeline (train / eval / inference)                       │
+│  PointPillar (or other) · Intermediate vs Late fusion modules       │
+└────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Dataset (CARLA, local)
+
+The main multi-agent export is under:
+
+`data/new_dataset_carla/`
+
+- **10 LiDAR agents** (`Tesla_1` … `Tesla_10`), each with time-stamped point clouds (`.ply`) and a **`trajectoire.csv`** (pose par frame).
+- **`ground_truth/NNNNNN.json`** : vérité terrain 3D par frame (objets, boîtes, classes CARLA).
+- Variable number of vehicles per frame (see GT files). Override the root with **`ADAFUSE_CARLA_DATA`** if needed.
+
+An older export may still live under `data/carla_simulator/`; the code defaults to **`new_dataset_carla`**.
 
 ---
 
@@ -61,36 +91,21 @@ Current cooperative perception systems use a **fixed fusion strategy** (early, l
 
 ### OpenCOOD
 
-[OpenCOOD](https://github.com/DerrickXuNu/OpenCOOD) (ICRA 2022) is an open-source framework for cooperative 3D object detection. It provides:
-
-- A unified pipeline for **multi-agent LiDAR-based perception**
-- Multiple fusion strategies: Early, Late, and Intermediate (AttFuse, V2VNet, F-Cooper, CoBEVT…)
-- The **OPV2V dataset** — a large-scale V2V benchmark collected in CARLA
-- Training and evaluation tools with standard AP metrics
-
-In AdaFuse, OpenCOOD provides the backbone perception pipeline. We extend its fusion module to accept dynamic strategy selection at inference time.
+[OpenCOOD](https://github.com/DerrickXuNu/OpenCOOD) (ICRA 2022) provides multi-agent LiDAR cooperative 3D detection, including **intermediate** and **late** fusion baselines, training, and AP metrics.
 
 ### CARLA
 
-[CARLA](https://carla.org) is an open-source autonomous driving simulator built on Unreal Engine. It provides:
+[CARLA](https://carla.org) is used to generate **multi-agent** scenarios; this repository includes a **pre-exported** dataset under `data/new_dataset_carla/`.
 
-- High-fidelity **multi-sensor simulation** (LiDAR, cameras, GNSS, IMU)
-- Configurable **multi-agent scenarios** with controllable traffic and weather
-- A Python API for programmatic scenario scripting and data collection
+### AdaFuse modules (`adafuse/`)
 
-In AdaFuse, CARLA is used to generate diverse cooperative driving scenarios — varying the number of agents, occlusion levels, traffic density, and communication constraints — to train and evaluate the fusion selector.
-
-### AdaFuse — Adaptive Selector
-
-The core contribution of this project. A **context-aware module** that observes the current driving scenario and selects the most appropriate fusion strategy:
-
-| Input Context | Selected Strategy | Rationale |
-|---|---|---|
-| High occlusion, many agents, good bandwidth | Intermediate | Rich feature sharing needed |
-| Low bandwidth, few agents, open road | Late | Lightweight, sufficient |
-| Dense traffic, near-range interaction | Early | Maximum information sharing |
-
-The selector is built as an **LLM-based reasoning module** that takes structured context as input and outputs a fusion decision — making the selection process interpretable and steerable.
+| Module | Role |
+|--------|------|
+| `bandwidth.py` | Pairwise capacities, estimated bitrates for intermediate vs late fusion, feasibility checks. |
+| `scene.py` | Agent states, scene summary text from positions + optional tags. |
+| `policy.py` | Structured fusion plan (clusters, modes). |
+| `llm_selector.py` | Prompt construction, JSON plan parsing; Hugging Face Llama 3 by default when `HUGGINGFACEHUB_API_TOKEN` is set; heuristic fallback or `--no-llm`. |
+| `carla_constants.py` | Paths and constants for the local CARLA export (10 agents by default). |
 
 ---
 
@@ -99,26 +114,19 @@ The selector is built as an **LLM-based reasoning module** that takes structured
 ```
 adafuse/
 ├── opencood/               # OpenCOOD codebase (integrated)
-│   ├── models/
-│   │   └── fuse_modules/   # Fusion architectures
-│   ├── data_utils/         # OPV2V data loading
-│   ├── tools/              # train.py, inference.py
-│   └── hypes_yaml/         # Experiment configs
-├── adafuse/                # AdaFuse core modules
-│   ├── llm_selector.py     # LLM-based strategy selector
-│   ├── adaptive_fusion.py  # Dynamic fusion wrapper
-│   └── agents/             # Multi-agent coordination
-├── carla/                  # CARLA integration
-│   ├── scenarios/          # Scenario definitions
-│   ├── data_collection/    # Sensor data pipelines
-│   └── configs/            # CARLA environment configs
-├── experiments/            # Logs, results, checkpoints
+├── adafuse/                # AdaFuse: bandwidth, scene, LLM policy
+├── data/
+│   └── new_dataset_carla/  # CARLA: 10 agents, PLY + trajectoire + ground_truth/
 ├── scripts/
-│   ├── train.sh
-│   └── eval.sh
+│   └── run_adafuse_demo.py # Demo: bandwidth + scene + fusion decision
+├── adafuse/ui/
+│   └── streamlit_app.py    # Console web (contraintes + décision + chat)
+├── jobs/
+│   └── adafuse_ui.batch    # SLURM: lance Streamlit sur le cluster
+├── experiments/            # Logs, results, checkpoints
 ├── environment.yml
 ├── setup.py
-└── .gitignore
+└── README.md
 ```
 
 ---
@@ -130,44 +138,67 @@ adafuse/
 - Ubuntu 18.04+
 - CUDA 11.3+, cuDNN
 - GPU with ≥ 6 GB VRAM
-- CARLA 0.9.13+
+- CARLA 0.9.13+ (for new data collection; optional if only using `data/new_dataset_carla/`)
 
 ### Setup
 
 ```bash
-# Clone the repo
-git clone git@github.com:TON-USERNAME/AdaFuse.git
-cd AdaFuse
+git clone git@github.com:TON-USERNAME/adafuse.git
+cd adafuse
 
-# Create conda environment
 conda env create -f environment.yml
 conda activate opencood
 
-# Install PyTorch (CUDA 11.3)
 conda install pytorch torchvision cudatoolkit=11.3 -c pytorch
-
-# Install spconv
 pip install spconv-cu113
 
-# Build CUDA extensions
 python opencood/utils/setup.py build_ext --inplace
-
-# Install in dev mode
 python setup.py develop
 ```
+
+### LLM (Hugging Face Inference) — default
+
+The demo (`scripts/run_adafuse_demo.py`) calls **`meta-llama/Meta-Llama-3-8B-Instruct`** via the Hugging Face **Inference Providers router** (`https://router.huggingface.co/v1/chat/completions`, OpenAI-compatible) whenever **`HUGGINGFACEHUB_API_TOKEN`** is set (e.g. in a project `.env` loaded automatically). Accept the model license on the Hub and use a token with **Inference Providers** permissions.
+
+Optional: **`ADAFUSE_HF_MODEL`** (Hub model id), **`ADAFUSE_HF_ROUTER_URL`** (override the chat endpoint if needed).
+
+**Without a token**, or after API/parse failures, the code falls back to a **deterministic heuristic**. To **skip the LLM** on purpose, run with **`--no-llm`** (or set **`ADAFUSE_NO_LLM=1`** in `jobs/adafuse.batch`).
+
+Diagnostics: the demo JSON includes **`fallback_reason`**, **`error_detail`**, and **`dotenv_file`**. Messages are also printed to **stderr** (SLURM: `jobs/logs/error/adafuse.err`). Set **`ADAFUSE_VERBOSE=1`** for a full Python traceback on HF/parse errors.
 
 ---
 
 ## Usage
 
-### Visualize the OPV2V dataset
+### CARLA data layout
+
+Point clouds are organized per agent, e.g. `data/new_dataset_carla/Tesla_<id>/<frame>.ply`, with `<id>` in `1 … 10`, plus `ground_truth/<frame>.json` and `trajectoire.csv` per agent.
+
+### Demo: bandwidth model + fusion decision
+
+```bash
+python scripts/run_adafuse_demo.py
+```
+
+### Web UI (contraintes, visualisation, chat Llama)
+
+Interactive console: adjust link capacities (sliders), view fleet layout and **C_ij** heatmap, run **fusion decision** (Llama or heuristic), and chat with **Llama** with **session memory** (context includes the latest simulation digest).
+
+```bash
+pip install -r requirements-ui.txt
+streamlit run adafuse/ui/streamlit_app.py
+```
+
+On the DGX cluster (SLURM), use **`jobs/adafuse_ui.batch`**, then SSH port-forward to the compute node (see comments in the batch file). Set **`HUGGINGFACEHUB_API_TOKEN`** in `.env` or the environment.
+
+### Visualize OPV2V (or compatible) data
 
 ```bash
 # Edit validate_dir in opencood/hypes_yaml/visualization.yaml first
 python opencood/visualization/vis_data_sequence.py --color_mode z-value
 ```
 
-### Run inference with a fixed strategy
+### OpenCOOD inference (fixed strategy)
 
 ```bash
 python opencood/tools/inference.py \
@@ -176,22 +207,20 @@ python opencood/tools/inference.py \
     --show_vis
 ```
 
-### Run inference with AdaFuse adaptive selection
+Use `fusion_method` ∈ {`late`, `early`, `intermediate`} as in OpenCOOD.
 
-```bash
-python scripts/eval.sh --model_dir <CHECKPOINT_FOLDER> --adaptive
-```
-
-### Train
+### Training (OpenCOOD)
 
 ```bash
 python opencood/tools/train.py --hypes_yaml <CONFIG_FILE>
-
-# Multi-GPU
-CUDA_VISIBLE_DEVICES=0,1,2,3 python -m torch.distributed.launch \
-    --nproc_per_node=4 --use_env \
-    opencood/tools/train.py --hypes_yaml <CONFIG_FILE>
 ```
+
+---
+
+## Future Work
+
+- **Fine-tune a small LLM** on (scene encoding, bandwidth snapshot, fusion plan, achieved AP, bits transferred).
+- **End-to-end hybrid inference** in OpenCOOD driven by `FusionPlan` (cluster-wise intermediate + late merge).
 
 ---
 

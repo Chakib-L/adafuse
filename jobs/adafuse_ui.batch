@@ -1,0 +1,56 @@
+#!/bin/bash
+###############################################################################
+# AdaFuse — interface Streamlit (contraintes réseau + décision + chat Llama)
+#
+# Soumission :
+#   sbatch /raid/home/students/lahrach_cha/ChakibProjects/adafuse/jobs/adafuse_ui.batch
+#
+# Accès depuis ton PC (le job tourne sur un nœud de calcul, pas sur la machine de login) :
+#   1) Récupère le hostname du nœud : sortie du job (ligne "hostname") ou
+#      squeue -j $SLURM_JOB_ID -h -o "%N"   # depuis une session sur le DGX
+#   2) Depuis ton PC, tunnel vers CE nœud (port distant = celui ci‑dessous, défaut 18501) :
+#      ssh -N -L 18501:NOM_NOEUD_CALCUL:18501 USER@SERVEUR_LOGIN_DGX
+#      (-N = pas de shell distant, uniquement le tunnel)
+#   3) Navigateur sur le PC : http://localhost:18501
+#   Si ton cluster permet un saut direct vers le nœud :
+#      ssh -J USER@LOGIN USER@NOM_NOEUD -N -L 18501:localhost:18501
+#
+# Surcharge du port : export ADAFUSE_UI_PORT=XXXX avant sbatch (doit matcher le tunnel).
+#
+# Token HF : .env à la racine du dépôt (HUGGINGFACEHUB_API_TOKEN) ou export avant sbatch.
+###############################################################################
+#SBATCH --job-name=adafuse_ui
+#SBATCH --output=/raid/home/students/lahrach_cha/ChakibProjects/adafuse/jobs/logs/output/adafuse_ui.out
+#SBATCH --error=/raid/home/students/lahrach_cha/ChakibProjects/adafuse/jobs/logs/error/adafuse_ui.err
+#SBATCH --partition=prod40
+#SBATCH --gres=gpu:nvidia_a100_3g.40gb:1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+#SBATCH --time=04:00:00
+
+REPO_ROOT="/raid/home/students/lahrach_cha/ChakibProjects/adafuse"
+set -euo pipefail
+export PYTHONUNBUFFERED=1
+
+cd "${REPO_ROOT}"
+mkdir -p jobs/logs/output jobs/logs/error
+
+source ~/miniforge3/etc/profile.d/conda.sh
+conda activate opencood
+
+"${HOME}/miniforge3/envs/opencood/bin/pip" install -q -r requirements-ui.txt 2>/dev/null \
+  || "${HOME}/miniforge3/envs/opencood/bin/pip" install -q streamlit
+
+PORT="${ADAFUSE_UI_PORT:-18501}"
+export STREAMLIT_SERVER_PORT="${PORT}"
+export STREAMLIT_SERVER_ADDRESS="0.0.0.0"
+export STREAMLIT_BROWSER_GATHER_USAGE_STATS="false"
+
+echo "[$(date)] Démarrage Streamlit AdaFuse sur 0.0.0.0:${PORT} (job ${SLURM_JOB_ID:-local})"
+echo "Tunnel depuis ton PC (remplace USER et LOGIN par ton accès SSH au DGX) :"
+echo "  ssh -N -L ${PORT}:$(hostname):${PORT} USER@LOGIN"
+echo "Puis navigateur : http://localhost:${PORT}"
+hostname
+echo "PYTHON: $(which python)"
+
+exec streamlit run adafuse/ui/streamlit_app.py --server.port "${PORT}" --server.address 0.0.0.0

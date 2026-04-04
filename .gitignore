@@ -110,3 +110,5 @@ vis_output/
 .env.local
 secrets.yaml
 config_local.yaml
+
+.streamlit/
