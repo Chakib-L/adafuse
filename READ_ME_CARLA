@@ -1,0 +1,18 @@
+1/ Installation rapide de Carla
+
+Se rendre sur http://carla.org/ et suivre les étapes, si l'une des étapes ne marchent pas, il faut s'assurer d'utiliser 
+la bonne version de Python.
+La version de Python à utiliser se trouve dans Python_API/carla/dist, il faut regarderr le chiffre du fichier carla, si ce dernier est écrit 312, il faut utiliser py 3.12
+Dans le GIT, il manque ici tout le dossier CarlaUE4 ; Co-SImulation ; Engine ; HDMaps ; Python API. Ces fichiers sont facilement trouvables sur le lien de Carla
+2/Serveur Carla
+
+Pour lancer une simulation Carla, il faut tout d'abord créer une fenetre (serveur) Carla, cela prend énormément de mémoire graphique, pour faire tourner, il faut à minima
+16 Go de RAM si pas de carte graphique
+8 Go si l'ordinateur possède au moins 12Go de VRAM
+
+La commande à effectuer est la suivante : .\CarlaUE4.exe -windowed -ResX=400 -ResY=300 -quality-level=Low -dx11
+il faut s'assurer d'être dans le bon dossier afin que la machine reconnaisse le fichier CarlaUE4.exe
+
+3/ Exécution d'une simulation
+Pour simplifier, il faut mettre le fichier python dans le même dossier que CarlaUE4.exe et exécuter le python tout en ayant le serveur Carla de lancé et en veillant à prendre la bonne version de python.
+La simulation pourra être observée sur la fenetre et les documents utilisés par l'IA pour le traitement de donnée se retrouve sur le bureau dans un nouveau dossier
